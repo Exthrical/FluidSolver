@@ -22,6 +22,13 @@ struct FlipParams {
     int pressureIters = 60;
     int maxParticles = 200000;
     int particlesPerCell = 8; // for initial fill; helps stability at fine grids
+    // Volume preservation controls
+    bool enableMinSeparation = true;
+    int minSepIterations = 2;
+    float minSepRelax = 0.6f;
+    bool enableDensityRelax = true;
+    float densityStrength = 0.15f; // fraction of h per step at oc=n0
+    int densityBlur = 1; // cells of box blur for occupancy
 };
 
 class FlipSolver2D {
@@ -54,6 +61,13 @@ public:
     void setGravity(float g) { params_.gravity = g; }
     void setPressureIters(int n) { params_.pressureIters = n; }
     void setSubsteps(int n) { params_.substeps = std::max(1, n); }
+    // Volume preservation setters
+    void setMinSeparationEnabled(bool b) { params_.enableMinSeparation = b; }
+    void setMinSeparationIters(int it) { params_.minSepIterations = std::max(0, it); }
+    void setMinSeparationRelax(float r) { params_.minSepRelax = std::max(0.0f, std::min(1.0f, r)); }
+    void setDensityRelaxEnabled(bool b) { params_.enableDensityRelax = b; }
+    void setDensityStrength(float k) { params_.densityStrength = std::max(0.0f, k); }
+    void setDensityBlur(int r) { params_.densityBlur = std::max(0, r); }
     int particleCount() const { return (int)particles_.size(); }
 
     // For debugging / visualization
@@ -95,6 +109,8 @@ private:
     void gridToParticles();
     void advectParticles(float dt);
     void enforceParticleCollisions(Particle& p) const;
+    void enforceMinimumSeparation(float dt);
+    void enforceCellDensity(float dt);
 
     // Interpolation helpers
     Vec2 sampleGridVelocity(const Vec2& pos, const std::vector<float>& u, const std::vector<float>& v) const;

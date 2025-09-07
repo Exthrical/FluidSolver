@@ -33,11 +33,18 @@ struct UIState {
     float gravity = -9.8f;
     float flipRatio = 0.7f;
     int pressureIters = 60;
-    int substeps = 1;
+    int substeps = 4;
     float brushRadius = 0.04f;
     ToolMode tool = ToolMode::DrawWater;
     RenderSettings render;
     bool showDemo = false;
+    // Volume preservation
+    bool enableMinSep = true;
+    int minSepIters = 2;
+    float minSepRelax = 0.6f;
+    bool enableDensity = true;
+    float densityStrength = 0.15f;
+    int densityBlur = 0;
 };
 
 static void glfwErrorCallback(int error, const char* description) {
@@ -88,6 +95,13 @@ int main() {
         solver.setFlipRatio(ui.flipRatio);
         solver.setPressureIters(ui.pressureIters);
         solver.setSubsteps(ui.substeps);
+        // Volume preservation params
+        solver.setMinSeparationEnabled(ui.enableMinSep);
+        solver.setMinSeparationIters(ui.minSepIters);
+        solver.setMinSeparationRelax(ui.minSepRelax);
+        solver.setDensityRelaxEnabled(ui.enableDensity);
+        solver.setDensityStrength(ui.densityStrength);
+        solver.setDensityBlur(ui.densityBlur);
 
         // Step simulation
         auto now = std::chrono::high_resolution_clock::now();
@@ -153,6 +167,16 @@ int main() {
                 static int newNx = solver.nx(); static int newNy = solver.ny();
                 ImGui::InputInt("Grid NX", &newNx); ImGui::SameLine(); ImGui::InputInt("NY", &newNy);
                 if (ImGui::Button("Resize Grid")) { solver.resize(std::max(4, newNx), std::max(4, newNy)); }
+            }
+            ImGui::Separator();
+            if (ImGui::CollapsingHeader("Volume Preservation", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Checkbox("Min Separation", &ui.enableMinSep);
+                ImGui::SameLine(); ImGui::SliderInt("Iters", &ui.minSepIters, 0, 5);
+                ImGui::SliderFloat("Relax", &ui.minSepRelax, 0.0f, 1.0f);
+                ImGui::Separator();
+                ImGui::Checkbox("Density Relax", &ui.enableDensity);
+                ImGui::SliderFloat("Strength", &ui.densityStrength, 0.0f, 0.5f);
+                ImGui::SliderInt("Size (blur)", &ui.densityBlur, 0, 4);
             }
         }
         ImGui::End();
