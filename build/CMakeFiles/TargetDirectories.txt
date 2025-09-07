@@ -1,0 +1,3 @@
+/mnt/c/Users/deera/Codex/FluidSolver/build/CMakeFiles/FluidSolver.dir
+/mnt/c/Users/deera/Codex/FluidSolver/build/CMakeFiles/edit_cache.dir
+/mnt/c/Users/deera/Codex/FluidSolver/build/CMakeFiles/rebuild_cache.dir

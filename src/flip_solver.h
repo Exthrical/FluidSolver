@@ -1,0 +1,102 @@
+#pragma once
+#include <vector>
+#include <cstdint>
+#include <limits>
+#include <random>
+#include <algorithm>
+#include "vec2.h"
+#include "colliders.h"
+
+struct Particle {
+    Vec2 p;
+    Vec2 v;
+};
+
+struct FlipParams {
+    int nx = 128;
+    int ny = 96;
+    float dt = 1.0f / 60.0f;
+    int substeps = 1;
+    float gravity = -9.8f; // y-direction downwards
+    float flipRatio = 0.7f; // 1 = pure FLIP, 0 = pure PIC
+    int pressureIters = 60;
+    int maxParticles = 200000;
+    int particlesPerCell = 8; // for initial fill; helps stability at fine grids
+};
+
+class FlipSolver2D {
+public:
+    explicit FlipSolver2D(const FlipParams& params = {});
+
+    void resize(int nx, int ny);
+
+    void clearFluid();
+    void clearColliders();
+
+    void addFluidRect(const Vec2& minPt, const Vec2& maxPt, float jitter = 0.3f);
+    void addFluidCircle(const Vec2& c, float r, float jitter = 0.3f);
+    void addParticle(const Vec2& p, const Vec2& v = Vec2(0,0));
+
+    void addColliderRect(const Vec2& minPt, const Vec2& maxPt);
+    void addColliderCircle(const Vec2& c, float r);
+    void eraseFluidCircle(const Vec2& c, float r);
+
+    void step(float dt);
+
+    // Accessors
+    const std::vector<Particle>& particles() const { return particles_; }
+    const ColliderSet& colliders() const { return colliders_; }
+    int nx() const { return nx_; }
+    int ny() const { return ny_; }
+    float h() const { return h_; }
+    float flipRatio() const { return params_.flipRatio; }
+    void setFlipRatio(float r) { params_.flipRatio = r; }
+    void setGravity(float g) { params_.gravity = g; }
+    void setPressureIters(int n) { params_.pressureIters = n; }
+    void setSubsteps(int n) { params_.substeps = std::max(1, n); }
+    int particleCount() const { return (int)particles_.size(); }
+
+    // For debugging / visualization
+    const std::vector<float>& gridU() const { return u_; }
+    const std::vector<float>& gridV() const { return v_; }
+
+private:
+    FlipParams params_;
+    int nx_{0}, ny_{0};
+    float h_{1.0f}; // cell size assuming domain [0,1]^2
+
+    // Particles
+    std::vector<Particle> particles_;
+    std::mt19937 rng_{1234u};
+
+    // Colliders
+    ColliderSet colliders_;
+
+    // Grid face velocities and helper arrays
+    // u lives on (i in [0..nx], j in [0..ny-1]) at positions (i*h, (j+0.5)*h)
+    // v lives on (i in [0..nx-1], j in [0..ny]) at positions ((i+0.5)*h, j*h)
+    std::vector<float> u_, v_, uOld_, vOld_, uW_, vW_;
+    // Cell-centered pressure and markers
+    std::vector<float> p_, div_;
+    std::vector<uint8_t> marker_; // 0=air, 1=fluid, 2=solid
+
+    inline int idxU(int i, int j) const { return i + (nx_ + 1) * j; }
+    inline int idxV(int i, int j) const { return i + nx_ * j; }
+    inline int idxC(int i, int j) const { return i + nx_ * j; }
+
+    void allocate();
+    void clearGrid();
+    void buildMarkers();
+    void particlesToGrid();
+    void applySolidBoundariesOnGrid();
+    void computeDivergence();
+    void pressureSolve();
+    void subtractPressureGradient();
+    void gridToParticles();
+    void advectParticles(float dt);
+    void enforceParticleCollisions(Particle& p) const;
+
+    // Interpolation helpers
+    Vec2 sampleGridVelocity(const Vec2& pos, const std::vector<float>& u, const std::vector<float>& v) const;
+    Vec2 sampleGridDelta(const Vec2& pos, const std::vector<float>& uNew, const std::vector<float>& vNew, const std::vector<float>& uOld, const std::vector<float>& vOld) const;
+};
