@@ -89,6 +89,8 @@ int main() {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         int fbW, fbH; glfwGetFramebufferSize(window, &fbW, &fbH);
+        // Ensure OpenGL viewport matches current framebuffer size
+        glViewport(0, 0, fbW, fbH);
 
         // Update solver parameters live
         solver.setGravity(ui.gravity);
