@@ -1,5 +1,6 @@
 #include "flip_solver.h"
 #include <cassert>
+#include <cmath>
 
 FlipSolver2D::FlipSolver2D(const FlipParams& params) : params_(params) {
     resize(params_.nx, params_.ny);
@@ -122,8 +123,8 @@ void FlipSolver2D::step(float dt) {
         advectParticles(sdt);
         // Push particles out of colliders (but do not clamp to domain yet)
         pushOutOfColliders();
-        // Resolve excessive clustering to preserve volume thickness
-        if (params_.enableMinSeparation) enforceMinimumSeparation(sdt);
+        // Particle-based volume preservation (PBF/XPBD)
+        if (params_.enableMinSeparation) volumePreservationStep(sdt);
         // After separation, clamp to domain and colliders so P2G sees valid positions
         for (auto& p : particles_) enforceParticleCollisions(p);
         clearGrid();
@@ -135,7 +136,7 @@ void FlipSolver2D::step(float dt) {
         pressureSolve();
         subtractPressureGradient();
         gridToParticles();
-        if (params_.enableDensityRelax) enforceCellDensity(sdt);
+        // Old density relax removed; velocity already updated via PBF position solve
         // Final clamp for this substep to keep particles within domain even if density relax disabled
         for (auto& p : particles_) enforceParticleCollisions(p);
     }
@@ -421,149 +422,220 @@ void FlipSolver2D::enforceParticleCollisions(Particle& prt) const {
     }
 }
 
-void FlipSolver2D::enforceMinimumSeparation(float dt) {
-    if (particles_.empty()) return;
-    // Target spacing based on desired particles-per-cell
-    float spacing = h_ / std::sqrt(std::max(1, params_.particlesPerCell));
-    float rSep = 0.9f * spacing; // minimum allowed separation
-    float r2 = rSep * rSep;
-    const int iterations = std::max(0, params_.minSepIterations);
-    const float relax = params_.minSepRelax; // move fraction of computed displacement per iteration
+// Position-Based Fluids (PBF/XPBD) density constraint solve
+void FlipSolver2D::volumePreservationStep(float dt) {
+    const int n = (int)particles_.size();
+    if (n == 0) return;
 
-    // Build cell bins for neighbor search
-    auto buildBins = [&](std::vector<std::vector<int>>& bins){
-        bins.clear();
-        bins.resize(nx_ * ny_);
-        for (int i = 0; i < (int)particles_.size(); ++i) {
-            const Vec2& p = particles_[i].p;
-            int ix = (int)std::floor(p.x / hx_);
-            int iy = (int)std::floor(p.y / hy_);
-            if (ix < 0 || iy < 0 || ix >= nx_ || iy >= ny_) continue;
-            bins[idxC(ix, iy)].push_back(i);
-        }
+    // Ensure diagnostic storage is sized
+    if ((int)pbfDensity_.size() != n) pbfDensity_.assign(n, 0.0f);
+    if ((int)pbfLambda_.size()  != n) pbfLambda_.assign(n, 0.0f);
+    if ((int)pbfDelta_.size()   != n) pbfDelta_.assign(n, Vec2(0,0));
+
+    // Kernel support radius (world units)
+    const int supportCells = std::max(1, params_.densityBlur); // reinterpretation
+    const float hKer = std::max(hx_, hy_) * (float)supportCells;
+    const float hKer2 = hKer * hKer;
+
+    // Poly6 (2D) for density, Spiky (2D) for gradient
+    auto W_poly6 = [&](float r2) -> float {
+        if (r2 >= hKer2) return 0.0f;
+        float x = hKer2 - r2;
+        const float k = 4.0f / (3.14159265358979323846f * hKer2 * hKer2 * hKer2 * hKer2); // 4/(pi h^8)
+        return k * x * x * x;
+    };
+    auto gradW_spiky = [&](const Vec2& rij) -> Vec2 {
+        float r2 = rij.x*rij.x + rij.y*rij.y;
+        if (r2 <= 1e-12f || r2 >= hKer2) return Vec2(0,0);
+        float r = std::sqrt(r2);
+        Vec2 dir = rij / r;
+        // 2D spiky grad: -30/(pi h^5) * (h - r)^2 * dir
+        const float k = -30.0f / (3.14159265358979323846f * hKer*hKer*hKer*hKer*hKer);
+        float s = (hKer - r);
+        float mag = k * s * s;
+        return dir * mag;
     };
 
-    std::vector<Vec2> disp(particles_.size(), Vec2(0,0));
-    std::vector<std::vector<int>> bins;
+    // Build spatial bins for neighbors
+    std::vector<std::vector<int>> bins(nx_ * ny_);
+    auto binIndex = [&](const Vec2& p) -> int {
+        int ix = (int)std::floor(p.x / hx_);
+        int iy = (int)std::floor(p.y / hy_);
+        if (ix < 0 || iy < 0 || ix >= nx_ || iy >= ny_) return -1;
+        return idxC(ix, iy);
+    };
+    for (int i = 0; i < n; ++i) {
+        int b = binIndex(particles_[i].p);
+        if (b >= 0) bins[b].push_back(i);
+    }
 
-    for (int it = 0; it < iterations; ++it) {
-        std::fill(disp.begin(), disp.end(), Vec2(0,0));
-        buildBins(bins);
+    // Neighbor cell range based on support radius
+    const int rx = std::max(1, (int)std::ceil(hKer / hx_));
+    const int ry = std::max(1, (int)std::ceil(hKer / hy_));
+
+    // Rest density (dimensionless due to normalized kernel, mass=1)
+    const float rho0 = 1.0f;
+    const float eps = 1e-6f; // to avoid division by zero in lambda
+    const float compliance = params_.minSepRelax; // [0..1]
+    const float alpha = (compliance > 0.0f && dt > 0.0f) ? (compliance / (dt*dt)) : 0.0f;
+    const float scorrK = params_.densityStrength; // small artificial pressure to reduce clumping
+    const float scorrN = 4.0f; // exponent
+    const float wq = W_poly6(0.25f * hKer2); // reference weight at q = 0.5 h
+
+    // Save old positions for velocity update and compute momentum drift
+    std::vector<Vec2> posPrev(n);
+    for (int i = 0; i < n; ++i) posPrev[i] = particles_[i].p;
+
+    // Solver iterations
+    const int iters = std::max(0, params_.minSepIterations);
+    for (int it = 0; it < iters; ++it) {
+        // 1) Compute densities and lambdas
+        std::fill(pbfDensity_.begin(), pbfDensity_.end(), 0.0f);
+        std::fill(pbfLambda_.begin(),  pbfLambda_.end(),  0.0f);
+        std::fill(pbfDelta_.begin(),   pbfDelta_.end(),   Vec2(0,0));
+
+        // Densities
         for (int jy = 0; jy < ny_; ++jy) {
             for (int ix = 0; ix < nx_; ++ix) {
                 int c = idxC(ix, jy);
                 const auto& cell = bins[c];
                 if (cell.empty()) continue;
-                for (int dj = -1; dj <= 1; ++dj) {
-                    int nyi = jy + dj; if (nyi < 0 || nyi >= ny_) continue;
-                    for (int di = -1; di <= 1; ++di) {
-                        int nxi = ix + di; if (nxi < 0 || nxi >= nx_) continue;
-                        const auto& nb = bins[idxC(nxi, nyi)];
-                        for (int aIdx = 0; aIdx < (int)cell.size(); ++aIdx) {
-                            int a = cell[aIdx];
-                            // To avoid double counting, only pair with b where (nb cell > cell) or (same cell and b index > a index)
+                // For each particle in cell, search neighbor cells within rx,ry inclusively
+                for (int aIdx = 0; aIdx < (int)cell.size(); ++aIdx) {
+                    int i = cell[aIdx];
+                    const Vec2& xi = particles_[i].p;
+                    float rho = 0.0f;
+                    for (int dj = -ry; dj <= ry; ++dj) {
+                        int nyi = jy + dj; if (nyi < 0 || nyi >= ny_) continue;
+                        for (int di = -rx; di <= rx; ++di) {
+                            int nxi = ix + di; if (nxi < 0 || nxi >= nx_) continue;
+                            const auto& nb = bins[idxC(nxi, nyi)];
                             for (int bIdx = 0; bIdx < (int)nb.size(); ++bIdx) {
-                                int b = nb[bIdx];
-                                if (&nb == &cell) { if (bIdx <= aIdx) continue; }
-                                else {
-                                    // If neighbor cell index is lower in linear order, skip to avoid double counting
-                                    int thisLin = idxC(ix, jy);
-                                    int nbLin = idxC(nxi, nyi);
-                                    if (nbLin < thisLin) continue;
-                                }
-                                Vec2 d = particles_[a].p - particles_[b].p;
-                                float d2 = d.x*d.x + d.y*d.y;
-                                if (d2 >= r2 || d2 <= 1e-12f) continue;
-                                float dist = std::sqrt(d2);
-                                float overlap = rSep - dist;
-                                Vec2 n = d / dist;
-                                Vec2 corr = n * (0.5f * overlap);
-                                disp[a] += corr;
-                                disp[b] -= corr;
+                                int j = nb[bIdx];
+                                Vec2 rij = xi - particles_[j].p;
+                                float r2 = rij.x*rij.x + rij.y*rij.y;
+                                rho += W_poly6(r2);
                             }
                         }
                     }
+                    pbfDensity_[i] = rho; // m=1
                 }
             }
         }
-        // Apply displacements with relaxation and update velocities accordingly
-        for (size_t i = 0; i < particles_.size(); ++i) {
-            if (disp[i].x == 0.0f && disp[i].y == 0.0f) continue;
-            Vec2 delta = disp[i] * relax;
-            particles_[i].p += delta;
-            // Update velocity to be consistent with position change
-            if (dt > 0.0f) particles_[i].v += delta / dt;
+
+        // Lambdas
+        for (int jy = 0; jy < ny_; ++jy) {
+            for (int ix = 0; ix < nx_; ++ix) {
+                int c = idxC(ix, jy);
+                const auto& cell = bins[c]; if (cell.empty()) continue;
+                for (int aIdx = 0; aIdx < (int)cell.size(); ++aIdx) {
+                    int i = cell[aIdx];
+                    const Vec2& xi = particles_[i].p;
+                    float Ci = pbfDensity_[i] / rho0 - 1.0f;
+                    // Compute sum of gradient norms squared
+                    Vec2 gradCi_i(0,0);
+                    float sumGrad2 = 0.0f;
+                    for (int dj = -ry; dj <= ry; ++dj) {
+                        int nyi = jy + dj; if (nyi < 0 || nyi >= ny_) continue;
+                        for (int di = -rx; di <= rx; ++di) {
+                            int nxi = ix + di; if (nxi < 0 || nxi >= nx_) continue;
+                            const auto& nb = bins[idxC(nxi, nyi)];
+                            for (int bIdx = 0; bIdx < (int)nb.size(); ++bIdx) {
+                                int j = nb[bIdx];
+                                Vec2 rij = xi - particles_[j].p;
+                                Vec2 gradW = gradW_spiky(rij) / rho0; // m=1
+                                if (j == i) continue;
+                                sumGrad2 += gradW.x*gradW.x + gradW.y*gradW.y;
+                                gradCi_i -= gradW; // negative sum of neighbor grads
+                            }
+                        }
+                    }
+                    sumGrad2 += gradCi_i.x*gradCi_i.x + gradCi_i.y*gradCi_i.y;
+                    float denom = sumGrad2 + eps + alpha;
+                    pbfLambda_[i] = (denom > 0.0f) ? (-Ci / denom) : 0.0f;
+                }
+            }
+        }
+
+        // 2) Compute position corrections
+        for (int jy = 0; jy < ny_; ++jy) {
+            for (int ix = 0; ix < nx_; ++ix) {
+                int c = idxC(ix, jy);
+                const auto& cell = bins[c]; if (cell.empty()) continue;
+                for (int aIdx = 0; aIdx < (int)cell.size(); ++aIdx) {
+                    int i = cell[aIdx];
+                    const Vec2& xi = particles_[i].p;
+                    Vec2 delta(0,0);
+                    for (int dj = -ry; dj <= ry; ++dj) {
+                        int nyi = jy + dj; if (nyi < 0 || nyi >= ny_) continue;
+                        for (int di = -rx; di <= rx; ++di) {
+                            int nxi = ix + di; if (nxi < 0 || nxi >= nx_) continue;
+                            const auto& nb = bins[idxC(nxi, nyi)];
+                            for (int bIdx = 0; bIdx < (int)nb.size(); ++bIdx) {
+                                int j = nb[bIdx];
+                                if (j == i) continue;
+                                Vec2 rij = xi - particles_[j].p;
+                                float r2 = rij.x*rij.x + rij.y*rij.y;
+                                if (r2 >= hKer2) continue;
+                                Vec2 gradW = gradW_spiky(rij) / rho0;
+                                // Artificial pressure term (s_corr)
+                                float sc = 0.0f;
+                                if (scorrK > 0.0f && wq > 0.0f) {
+                                    float w = W_poly6(r2);
+                                    sc = -scorrK * std::pow(w / wq, scorrN);
+                                }
+                                delta += (pbfLambda_[i] + pbfLambda_[j] + sc) * gradW;
+                            }
+                        }
+                    }
+                    pbfDelta_[i] = delta / rho0;
+                }
+            }
+        }
+
+        // 3) Apply corrections with cap for stability
+        const float maxDisp = 0.1f * hKer; // per-iteration cap
+        for (int i = 0; i < n; ++i) {
+            Vec2 d = pbfDelta_[i];
+            float dl = std::sqrt(d.x*d.x + d.y*d.y);
+            if (dl > maxDisp) d *= (maxDisp / dl);
+            if (d.x == 0.0f && d.y == 0.0f) continue;
+            particles_[i].p += d;
+            // Keep within domain/colliders softly during iterations
             enforceParticleCollisions(particles_[i]);
         }
-    }
-}
 
-void FlipSolver2D::enforceCellDensity(float dt) {
-    if (particles_.empty()) return;
-    // Target per-cell occupancy
-    const float n0 = std::max(1, params_.particlesPerCell);
-    std::vector<float> occ(nx_ * ny_, 0.0f);
-    for (const auto& p : particles_) {
-        int ix = (int)std::floor(p.p.x / hx_);
-        int iy = (int)std::floor(p.p.y / hy_);
-        if (ix < 0 || iy < 0 || ix >= nx_ || iy >= ny_) continue;
-        occ[idxC(ix, iy)] += 1.0f;
+        // Rebuild bins after moving particles for next iteration
+        for (auto& b : bins) b.clear();
+        for (int i = 0; i < n; ++i) { int b = binIndex(particles_[i].p); if (b >= 0) bins[b].push_back(i); }
     }
-    // Optional blur to control size of density forces
-    int br = std::max(0, params_.densityBlur);
-    if (br > 0) {
-        std::vector<float> tmp = occ;
-        // box blur in x
-        for (int j = 0; j < ny_; ++j) {
-            for (int i = 0; i < nx_; ++i) {
-                float sum = 0.0f; int cnt = 0;
-                for (int di = -br; di <= br; ++di) {
-                    int ii = i + di; if (ii < 0 || ii >= nx_) continue; sum += tmp[idxC(ii, j)]; cnt++;
-                }
-                occ[idxC(i,j)] = (cnt > 0) ? sum / cnt : tmp[idxC(i,j)];
-            }
-        }
-        tmp = occ;
-        // box blur in y
-        for (int j = 0; j < ny_; ++j) {
-            for (int i = 0; i < nx_; ++i) {
-                float sum = 0.0f; int cnt = 0;
-                for (int dj = -br; dj <= br; ++dj) {
-                    int jj = j + dj; if (jj < 0 || jj >= ny_) continue; sum += tmp[idxC(i, jj)]; cnt++;
-                }
-                occ[idxC(i,j)] = (cnt > 0) ? sum / cnt : tmp[idxC(i,j)];
-            }
-        }
+
+    // Update velocities from position changes (momentum-consistent)
+    Vec2 totalMomentumBefore(0,0), totalMomentumAfter(0,0);
+    const float m = 1.0f; // unit mass per particle
+    for (int i = 0; i < n; ++i) totalMomentumBefore += particles_[i].v * m;
+    for (int i = 0; i < n; ++i) {
+        Vec2 dp = particles_[i].p - posPrev[i];
+        if (dt > 0.0f) particles_[i].v += dp / dt;
     }
-    // Compute simple gradients of occupancy to steer particles toward lower density
-    std::vector<Vec2> grad(nx_ * ny_, Vec2(0,0));
-    for (int j = 0; j < ny_; ++j) {
-        for (int i = 0; i < nx_; ++i) {
-            float l = (i > 0) ? occ[idxC(i-1, j)] : occ[idxC(i, j)];
-            float r = (i < nx_-1) ? occ[idxC(i+1, j)] : occ[idxC(i, j)];
-            float b = (j > 0) ? occ[idxC(i, j-1)] : occ[idxC(i, j)];
-            float t = (j < ny_-1) ? occ[idxC(i, j+1)] : occ[idxC(i, j)];
-            grad[idxC(i,j)] = Vec2(0.5f * (r - l), 0.5f * (t - b));
-        }
+    for (int i = 0; i < n; ++i) totalMomentumAfter += particles_[i].v * m;
+    Vec2 dP = totalMomentumAfter - totalMomentumBefore;
+    metricMomentumDrift_ = std::sqrt(dP.x*dP.x + dP.y*dP.y);
+
+    // Metrics: density error mean and max overlap proxy (based on density)
+    float sumErr = 0.0f; float maxErr = 0.0f;
+    for (int i = 0; i < n; ++i) { float e = std::abs(pbfDensity_[i]/rho0 - 1.0f); sumErr += e; if (e > maxErr) maxErr = e; }
+    metricMeanDensityErr_ = (n > 0) ? (sumErr / n) : 0.0f;
+    metricMaxOverlap_ = maxErr * h_; // scale by cell to give length-ish proxy
+
+    // Metric: horizontal-velocity variance in top band (y>0.9) using particle velocities
+    float mean = 0.0f; float var = 0.0f; int cnt = 0;
+    for (int i = 0; i < n; ++i) if (particles_[i].p.y > 0.9f) { mean += particles_[i].v.x; cnt++; }
+    if (cnt > 0) mean /= cnt;
+    for (int i = 0; i < cnt; ++i) {}
+    if (cnt > 0) {
+        for (int i = 0; i < n; ++i) if (particles_[i].p.y > 0.9f) { float d = particles_[i].v.x - mean; var += d*d; }
+        var /= cnt;
     }
-    const float k = params_.densityStrength; // strength per application
-    for (auto& p : particles_) {
-        int ix = (int)std::floor(p.p.x / hx_);
-        int iy = (int)std::floor(p.p.y / hy_);
-        if (ix < 0 || iy < 0 || ix >= nx_ || iy >= ny_) continue;
-        int c = idxC(ix, iy);
-        float oc = occ[c] - n0;
-        if (oc <= 0.0f) continue;
-        Vec2 g = grad[c];
-        float gl = std::sqrt(g.x*g.x + g.y*g.y);
-        if (gl < 1e-6f) {
-            // No gradient info: bias a tiny push up to avoid infinite flattening
-            g = Vec2(0.0f, 1.0f); gl = 1.0f;
-        }
-        Vec2 dir = g / gl; // toward higher density, so move opposite
-        Vec2 delta = dir * (-k * (oc / n0) * h_);
-        p.p += delta;
-        if (dt > 0.0f) p.v += delta / dt;
-        enforceParticleCollisions(p);
-    }
+    metricTopBandVelVar_ = var;
 }

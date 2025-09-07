@@ -10,6 +10,8 @@ struct RenderSettings {
     bool showColliders = true;
     float particleSize = 3.0f; // pixels
     bool showParticleVel = false; // draw MAC-sampled velocity at particle positions
+    bool showDensityHeatmap = false; // color particles by PBF density error
+    bool showPbfCorrections = false; // draw PBF correction vectors
 };
 
 struct Viewport {
@@ -32,4 +34,5 @@ public:
     static void drawGrid(const FlipSolver2D& solver, const Viewport& vp, const RenderSettings& rs);
     static void drawVelocity(const FlipSolver2D& solver, const Viewport& vp, const RenderSettings& rs);
     static void drawParticleVel(const FlipSolver2D& solver, const Viewport& vp, const RenderSettings& rs);
+    static void drawPbfCorrections(const FlipSolver2D& solver, const Viewport& vp, const RenderSettings& rs);
 };

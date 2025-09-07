@@ -39,12 +39,13 @@ struct UIState {
     RenderSettings render;
     bool showDemo = false;
     // Volume preservation
-    bool enableMinSep = true;
-    int minSepIters = 2;
-    float minSepRelax = 0.6f;
-    bool enableDensity = true;
-    float densityStrength = 0.15f;
-    int densityBlur = 0;
+    bool enableMinSep = true;     // reinterpreted: enable PBF/XPBD
+    int minSepIters = 2;          // PBF iterations
+    float minSepRelax = 0.0f;     // XPBD compliance
+    bool enableDensity = false;   // reinterpreted: show density heatmap
+    float densityStrength = 0.10f; // s_corr strength
+    int densityBlur = 2;          // kernel support radius (cells)
+    bool showPbfCorrections = false;
 };
 
 static void glfwErrorCallback(int error, const char* description) {
@@ -101,7 +102,7 @@ int main() {
         solver.setMinSeparationEnabled(ui.enableMinSep);
         solver.setMinSeparationIters(ui.minSepIters);
         solver.setMinSeparationRelax(ui.minSepRelax);
-        solver.setDensityRelaxEnabled(ui.enableDensity);
+        solver.setDensityRelaxEnabled(false); // deprecated; kept for compatibility
         solver.setDensityStrength(ui.densityStrength);
         solver.setDensityBlur(ui.densityBlur);
 
@@ -123,6 +124,7 @@ int main() {
         if (ui.render.showVel) Renderer2D::drawVelocity(solver, vp, ui.render);
         if (ui.render.showParticleVel) Renderer2D::drawParticleVel(solver, vp, ui.render);
         Renderer2D::drawParticles(solver, vp, ui.render);
+        if (ui.render.showPbfCorrections) Renderer2D::drawPbfCorrections(solver, vp, ui.render);
 
         // Start ImGui frame
         ImGui_ImplOpenGL2_NewFrame();
@@ -174,13 +176,22 @@ int main() {
             }
             ImGui::Separator();
             if (ImGui::CollapsingHeader("Volume Preservation", ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::Checkbox("Min Separation", &ui.enableMinSep);
-                ImGui::SameLine(); ImGui::SliderInt("Iters", &ui.minSepIters, 0, 5);
-                ImGui::SliderFloat("Relax", &ui.minSepRelax, 0.0f, 1.0f);
+                ImGui::Checkbox("Enable PBF/XPBD", &ui.enableMinSep);
+                ImGui::SameLine(); ImGui::SliderInt("Iters", &ui.minSepIters, 0, 10);
+                ImGui::SliderFloat("Compliance (Relax)", &ui.minSepRelax, 0.0f, 1.0f);
+                ImGui::SliderFloat("s_corr Strength", &ui.densityStrength, 0.0f, 0.5f);
+                ImGui::SliderInt("Kernel Radius (cells)", &ui.densityBlur, 1, 6);
                 ImGui::Separator();
-                ImGui::Checkbox("Density Relax", &ui.enableDensity);
-                ImGui::SliderFloat("Strength", &ui.densityStrength, 0.0f, 0.5f);
-                ImGui::SliderInt("Size (blur)", &ui.densityBlur, 0, 4);
+                ImGui::Checkbox("Show Density Heatmap", &ui.enableDensity);
+                ImGui::SameLine(); ImGui::Checkbox("Show PBF Corrections", &ui.showPbfCorrections);
+                ui.render.showDensityHeatmap = ui.enableDensity;
+                ui.render.showPbfCorrections = ui.showPbfCorrections;
+                ImGui::Separator();
+                ImGui::Text("Metrics:");
+                ImGui::Text("Top-band u variance: %.3e", solver.metricTopBandVelVar());
+                ImGui::Text("Mean density error: %.3e", solver.metricMeanDensityErr());
+                ImGui::Text("Max overlap proxy:  %.3e", solver.metricMaxOverlap());
+                ImGui::Text("Momentum drift:      %.3e", solver.metricMomentumDrift());
             }
         }
         ImGui::End();

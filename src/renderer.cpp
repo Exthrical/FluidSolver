@@ -61,11 +61,22 @@ void Renderer2D::drawParticles(const FlipSolver2D& solver, const Viewport& vp, c
     glBegin(GL_POINTS);
     int n = solver.particleCount();
     const auto& parts = solver.particles();
+    const auto& dens = solver.pbfDensities();
     for (int i = 0; i < n; ++i) {
         const Vec2 sp = worldToScreen(parts[i].p, vp);
-        float t = clampf_local(parts[i].p.y, 0.0f, 1.0f);
-        // subtle blue gradient
-        glColor3f(0.2f, 0.5f + 0.4f * (1.0f - t), 0.95f);
+        if (rs.showDensityHeatmap && (int)dens.size() == n) {
+            float rho = dens[i];
+            float err = std::fabs(rho - 1.0f); // rho0=1
+            // Map error to red-yellow-white
+            float r = clampf_local(0.5f + err, 0.2f, 1.0f);
+            float g = clampf_local(0.2f + 0.8f * (1.0f - std::fabs(err - 0.5f)), 0.2f, 1.0f);
+            float b = 0.2f;
+            glColor3f(r, g, b);
+        } else {
+            float t = clampf_local(parts[i].p.y, 0.0f, 1.0f);
+            // subtle blue gradient
+            glColor3f(0.2f, 0.5f + 0.4f * (1.0f - t), 0.95f);
+        }
         glVertex2f(sp.x, sp.y);
     }
     glEnd();
@@ -168,6 +179,24 @@ void Renderer2D::drawParticleVel(const FlipSolver2D& solver, const Viewport& vp,
         Vec2 v = solver.sampleMAC(prt.p) * scale;
         Vec2 s0 = worldToScreen(prt.p, vp);
         Vec2 s1 = worldToScreen(Vec2(prt.p.x + v.x, prt.p.y + v.y), vp);
+        glBegin(GL_LINES); glVertex2f(s0.x, s0.y); glVertex2f(s1.x, s1.y); glEnd();
+    }
+}
+
+void Renderer2D::drawPbfCorrections(const FlipSolver2D& solver, const Viewport& vp, const RenderSettings& rs) {
+    if (!rs.showPbfCorrections) return;
+    glColor3f(0.9f, 0.9f, 0.2f);
+    glLineWidth(1.0f);
+    const auto& parts = solver.particles();
+    const auto& corr = solver.pbfCorrections();
+    const float scale = 1.0f; // already in world units per-iteration; small
+    int n = solver.particleCount();
+    if ((int)corr.size() != n) return;
+    for (int i = 0; i < n; ++i) {
+        Vec2 d = corr[i] * scale;
+        if (d.x == 0.0f && d.y == 0.0f) continue;
+        Vec2 s0 = worldToScreen(parts[i].p, vp);
+        Vec2 s1 = worldToScreen(Vec2(parts[i].p.x + d.x, parts[i].p.y + d.y), vp);
         glBegin(GL_LINES); glVertex2f(s0.x, s0.y); glVertex2f(s1.x, s1.y); glEnd();
     }
 }

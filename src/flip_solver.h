@@ -1,3 +1,16 @@
+// 2D FLIP solver with PBF/XPBD volume preservation
+//
+// This refactor replaces ad-hoc min-separation and density relax passes
+// with a robust Position-Based Fluids (PBF) / XPBD-style positional solver.
+// Each substep performs:
+//  - Neighbor search via grid bins using anisotropic spacing (hx, hy)
+//  - Density constraint C_i = (rho_i/rho0 - 1) using 2D poly6 kernel
+//  - Solve Lagrange multipliers lambda with XPBD compliance (alpha = compliance/dt^2)
+//  - Position corrections: dx_i = (1/rho0) sum_j (lambda_i + lambda_j + s_corr) * gradW_ij
+//  - Update particle velocities from position differences v += dx/dt to preserve momentum
+// Kernels use world-space support radius r = kernelRadiusCells * max(hx, hy).
+// Small per-iteration displacement cap improves stability.
+// Diagnostics (density heatmap, correction vectors, simple metrics) are stored for UI.
 #pragma once
 #include <vector>
 #include <cstdint>
@@ -22,13 +35,17 @@ struct FlipParams {
     int pressureIters = 60;
     int maxParticles = 200000;
     int particlesPerCell = 8; // for initial fill; helps stability at fine grids
-    // Volume preservation controls
+    // Volume preservation (PBF/XPBD) controls
+    // enableMinSeparation: interpreted as enabling PBF/XPBD volume preservation
     bool enableMinSeparation = true;
+    // minSepIterations: number of solver iterations per substep
     int minSepIterations = 2;
-    float minSepRelax = 0.6f;
-    bool enableDensityRelax = true;
-    float densityStrength = 0.15f; // fraction of h per step at oc=n0
-    int densityBlur = 1; // cells of box blur for occupancy
+    // minSepRelax: interpreted as XPBD compliance in [0..1]; higher = softer
+    float minSepRelax = 0.0f;
+    // densityStrength: interpreted as s_corr strength (artificial pressure) [0..0.5]
+    float densityStrength = 0.1f;
+    // densityBlur: interpreted as kernel support radius in cells (>=1)
+    int densityBlur = 2;
 };
 
 class FlipSolver2D {
@@ -63,13 +80,13 @@ public:
     void setGravity(float g) { params_.gravity = g; }
     void setPressureIters(int n) { params_.pressureIters = n; }
     void setSubsteps(int n) { params_.substeps = std::max(1, n); }
-    // Volume preservation setters
+    // Volume preservation setters (reinterpreted)
     void setMinSeparationEnabled(bool b) { params_.enableMinSeparation = b; }
     void setMinSeparationIters(int it) { params_.minSepIterations = std::max(0, it); }
     void setMinSeparationRelax(float r) { params_.minSepRelax = std::max(0.0f, std::min(1.0f, r)); }
-    void setDensityRelaxEnabled(bool b) { params_.enableDensityRelax = b; }
+    void setDensityRelaxEnabled(bool /*unused*/) { /* deprecated */ }
     void setDensityStrength(float k) { params_.densityStrength = std::max(0.0f, k); }
-    void setDensityBlur(int r) { params_.densityBlur = std::max(0, r); }
+    void setDensityBlur(int r) { params_.densityBlur = std::max(1, r); }
     int particleCount() const { return (int)particles_.size(); }
 
     // For debugging / visualization
@@ -77,6 +94,14 @@ public:
     const std::vector<float>& gridV() const { return v_; }
     // Canonical MAC sampler (used by G2P and debug rendering)
     Vec2 sampleMAC(const Vec2& pos) const;
+
+    // Diagnostics
+    const std::vector<float>& pbfDensities() const { return pbfDensity_; }
+    const std::vector<Vec2>& pbfCorrections() const { return pbfDelta_; }
+    float metricTopBandVelVar() const { return metricTopBandVelVar_; }
+    float metricMaxOverlap() const { return metricMaxOverlap_; }
+    float metricMeanDensityErr() const { return metricMeanDensityErr_; }
+    float metricMomentumDrift() const { return metricMomentumDrift_; }
 
 private:
     FlipParams params_;
@@ -115,10 +140,19 @@ private:
     void advectParticles(float dt);
     void pushOutOfColliders();
     void enforceParticleCollisions(Particle& p) const;
-    void enforceMinimumSeparation(float dt);
-    void enforceCellDensity(float dt);
+    void volumePreservationStep(float dt);
 
     // Interpolation helpers
     Vec2 sampleGridVelocity(const Vec2& pos, const std::vector<float>& u, const std::vector<float>& v) const;
     Vec2 sampleGridDelta(const Vec2& pos, const std::vector<float>& uNew, const std::vector<float>& vNew, const std::vector<float>& uOld, const std::vector<float>& vOld) const;
+
+    // PBF storage for diagnostics
+    std::vector<float> pbfDensity_;
+    std::vector<float> pbfLambda_;
+    std::vector<Vec2>  pbfDelta_;
+    // Metrics
+    float metricTopBandVelVar_{0.0f};
+    float metricMaxOverlap_{0.0f};
+    float metricMeanDensityErr_{0.0f};
+    float metricMomentumDrift_{0.0f};
 };
