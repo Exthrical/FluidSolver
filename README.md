@@ -5,6 +5,7 @@ A compact C++ OpenGL/GLFW app that simulates and displays a 2D FLIP water simula
 ## Features
 
 - 2D FLIP solver (particles + MAC grid) with PIC/FLIP blending
+- Robust particle volume preservation via PBF/XPBD constraint solver (anisotropic hx/hy aware)
 - Incompressibility via iterative pressure projection
 - Solid boundaries at the domain edges (window rectangle)
 - User-defined colliders (rectangles and circles)
@@ -41,6 +42,7 @@ Run the app:
   - Play/Pause to run or stop.
   - Step advances a single fixed time step.
   - Adjust dt, substeps, gravity, FLIP ratio, pressure iterations live.
+  - Volume preservation: iterations, compliance (XPBD), kernel radius, s_corr strength. Diagnostics overlays and simple metrics.
 - Display:
   - Toggle grid, velocity field; adjust velocity stride and particle size.
 
@@ -56,4 +58,3 @@ Notes:
 - Colliders: axis-aligned rectangles and circles with signed distance projection for particle collision; grid velocities zeroed at solid faces.
 
 Enjoy experimenting!
-
