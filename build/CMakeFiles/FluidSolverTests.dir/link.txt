@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/FluidSolverTests.dir/tests/solver_tests.cpp.o CMakeFiles/FluidSolverTests.dir/src/flip_solver.cpp.o -o FluidSolverTests 

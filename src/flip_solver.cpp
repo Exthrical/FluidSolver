@@ -584,7 +584,7 @@ void FlipSolver2D::volumePreservationStep(float dt) {
                                     float w = W_poly6(r2);
                                     sc = -scorrK * std::pow(w / wq, scorrN);
                                 }
-                                delta += (pbfLambda_[i] + pbfLambda_[j] + sc) * gradW;
+                                delta += gradW * (pbfLambda_[i] + pbfLambda_[j] + sc);
                             }
                         }
                     }

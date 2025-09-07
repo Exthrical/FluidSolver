@@ -129,12 +129,26 @@ FluidSolver/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolver.dir/build.make CMakeFiles/FluidSolver.dir/build
 .PHONY : FluidSolver/fast
 
+#=============================================================================
+# Target rules for targets named FluidSolverTests
+
+# Build rule for target.
+FluidSolverTests: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 FluidSolverTests
+.PHONY : FluidSolverTests
+
+# fast build rule for target.
+FluidSolverTests/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolverTests.dir/build.make CMakeFiles/FluidSolverTests.dir/build
+.PHONY : FluidSolverTests/fast
+
 src/flip_solver.o: src/flip_solver.cpp.o
 .PHONY : src/flip_solver.o
 
 # target to build an object file
 src/flip_solver.cpp.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolver.dir/build.make CMakeFiles/FluidSolver.dir/src/flip_solver.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolverTests.dir/build.make CMakeFiles/FluidSolverTests.dir/src/flip_solver.cpp.o
 .PHONY : src/flip_solver.cpp.o
 
 src/flip_solver.i: src/flip_solver.cpp.i
@@ -143,6 +157,7 @@ src/flip_solver.i: src/flip_solver.cpp.i
 # target to preprocess a source file
 src/flip_solver.cpp.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolver.dir/build.make CMakeFiles/FluidSolver.dir/src/flip_solver.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolverTests.dir/build.make CMakeFiles/FluidSolverTests.dir/src/flip_solver.cpp.i
 .PHONY : src/flip_solver.cpp.i
 
 src/flip_solver.s: src/flip_solver.cpp.s
@@ -151,6 +166,7 @@ src/flip_solver.s: src/flip_solver.cpp.s
 # target to generate assembly for a file
 src/flip_solver.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolver.dir/build.make CMakeFiles/FluidSolver.dir/src/flip_solver.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolverTests.dir/build.make CMakeFiles/FluidSolverTests.dir/src/flip_solver.cpp.s
 .PHONY : src/flip_solver.cpp.s
 
 src/main.o: src/main.cpp.o
@@ -200,6 +216,30 @@ src/renderer.s: src/renderer.cpp.s
 src/renderer.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolver.dir/build.make CMakeFiles/FluidSolver.dir/src/renderer.cpp.s
 .PHONY : src/renderer.cpp.s
+
+tests/solver_tests.o: tests/solver_tests.cpp.o
+.PHONY : tests/solver_tests.o
+
+# target to build an object file
+tests/solver_tests.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolverTests.dir/build.make CMakeFiles/FluidSolverTests.dir/tests/solver_tests.cpp.o
+.PHONY : tests/solver_tests.cpp.o
+
+tests/solver_tests.i: tests/solver_tests.cpp.i
+.PHONY : tests/solver_tests.i
+
+# target to preprocess a source file
+tests/solver_tests.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolverTests.dir/build.make CMakeFiles/FluidSolverTests.dir/tests/solver_tests.cpp.i
+.PHONY : tests/solver_tests.cpp.i
+
+tests/solver_tests.s: tests/solver_tests.cpp.s
+.PHONY : tests/solver_tests.s
+
+# target to generate assembly for a file
+tests/solver_tests.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolverTests.dir/build.make CMakeFiles/FluidSolverTests.dir/tests/solver_tests.cpp.s
+.PHONY : tests/solver_tests.cpp.s
 
 third_party/imgui/backends/imgui_impl_glfw.o: third_party/imgui/backends/imgui_impl_glfw.cpp.o
 .PHONY : third_party/imgui/backends/imgui_impl_glfw.o
@@ -378,6 +418,7 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... FluidSolver"
+	@echo "... FluidSolverTests"
 	@echo "... src/flip_solver.o"
 	@echo "... src/flip_solver.i"
 	@echo "... src/flip_solver.s"
@@ -387,6 +428,9 @@ help:
 	@echo "... src/renderer.o"
 	@echo "... src/renderer.i"
 	@echo "... src/renderer.s"
+	@echo "... tests/solver_tests.o"
+	@echo "... tests/solver_tests.i"
+	@echo "... tests/solver_tests.s"
 	@echo "... third_party/imgui/backends/imgui_impl_glfw.o"
 	@echo "... third_party/imgui/backends/imgui_impl_glfw.i"
 	@echo "... third_party/imgui/backends/imgui_impl_glfw.s"

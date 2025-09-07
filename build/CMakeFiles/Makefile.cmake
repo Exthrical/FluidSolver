@@ -47,4 +47,5 @@ set(CMAKE_MAKEFILE_PRODUCTS
 # Dependency information for all targets:
 set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/FluidSolver.dir/DependInfo.cmake"
+  "CMakeFiles/FluidSolverTests.dir/DependInfo.cmake"
   )

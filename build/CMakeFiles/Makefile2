@@ -64,6 +64,7 @@ CMAKE_BINARY_DIR = /mnt/c/Users/deera/Codex/FluidSolver/build
 
 # The main recursive "all" target.
 all: CMakeFiles/FluidSolver.dir/all
+all: CMakeFiles/FluidSolverTests.dir/all
 .PHONY : all
 
 # The main recursive "preinstall" target.
@@ -72,6 +73,7 @@ preinstall:
 
 # The main recursive "clean" target.
 clean: CMakeFiles/FluidSolver.dir/clean
+clean: CMakeFiles/FluidSolverTests.dir/clean
 .PHONY : clean
 
 #=============================================================================
@@ -99,6 +101,32 @@ FluidSolver: CMakeFiles/FluidSolver.dir/rule
 CMakeFiles/FluidSolver.dir/clean:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolver.dir/build.make CMakeFiles/FluidSolver.dir/clean
 .PHONY : CMakeFiles/FluidSolver.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/FluidSolverTests.dir
+
+# All Build rule for target.
+CMakeFiles/FluidSolverTests.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolverTests.dir/build.make CMakeFiles/FluidSolverTests.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolverTests.dir/build.make CMakeFiles/FluidSolverTests.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/mnt/c/Users/deera/Codex/FluidSolver/build/CMakeFiles --progress-num=12,13,14 "Built target FluidSolverTests"
+.PHONY : CMakeFiles/FluidSolverTests.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/FluidSolverTests.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/c/Users/deera/Codex/FluidSolver/build/CMakeFiles 3
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/FluidSolverTests.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/c/Users/deera/Codex/FluidSolver/build/CMakeFiles 0
+.PHONY : CMakeFiles/FluidSolverTests.dir/rule
+
+# Convenience name for target.
+FluidSolverTests: CMakeFiles/FluidSolverTests.dir/rule
+.PHONY : FluidSolverTests
+
+# clean rule for target.
+CMakeFiles/FluidSolverTests.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/FluidSolverTests.dir/build.make CMakeFiles/FluidSolverTests.dir/clean
+.PHONY : CMakeFiles/FluidSolverTests.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

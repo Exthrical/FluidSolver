@@ -97,3 +97,15 @@ if(MSVC)
 else()
   target_compile_options(FluidSolver PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+# Console test harness (no OpenGL/ImGui required)
+add_executable(FluidSolverTests
+  tests/solver_tests.cpp
+  src/flip_solver.cpp
+)
+target_include_directories(FluidSolverTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+  target_compile_options(FluidSolverTests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(FluidSolverTests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
