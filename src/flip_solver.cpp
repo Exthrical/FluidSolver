@@ -393,11 +393,34 @@ void FlipSolver2D::advectParticles(float dt) {
 }
 
 void FlipSolver2D::pushOutOfColliders() {
+    auto domainSdf = [](const Vec2& p) {
+        // Union of four half-spaces outside [0,1]^2 treated as solid
+        float dl = p.x;        // left wall half-space x<=0 : s = x
+        float dr = 1.0f - p.x; // right wall half-space x>=1 : s = 1-x
+        float db = p.y;        // bottom y<=0 : s = y
+        float dt = 1.0f - p.y; // top y>=1 : s = 1-y
+        return std::min(std::min(dl, dr), std::min(db, dt));
+    };
+    auto domainNormal = [](const Vec2& p) {
+        float dl = p.x;
+        float dr = 1.0f - p.x;
+        float db = p.y;
+        float dt = 1.0f - p.y;
+        float m1 = std::min(dl, dr);
+        float m2 = std::min(db, dt);
+        if (m1 < m2) {
+            return (dl < dr) ? Vec2(1.0f, 0.0f) : Vec2(-1.0f, 0.0f);
+        } else {
+            return (db < dt) ? Vec2(0.0f, 1.0f) : Vec2(0.0f, -1.0f);
+        }
+    };
     for (auto& prt : particles_) {
-        float d = colliders_.sdf(prt.p);
+        float dc = colliders_.sdf(prt.p);
+        float dd = domainSdf(prt.p);
+        float d = std::min(dc, dd);
         if (d < 0.0f) {
-            Vec2 n = colliders_.normal(prt.p);
-            prt.p -= n * d; // push out
+            Vec2 n = (dc < dd) ? colliders_.normal(prt.p) : domainNormal(prt.p);
+            prt.p -= n * d; // push out of solid
             float vn = dot(prt.v, n);
             if (vn < 0.0f) prt.v -= n * vn; // kill inward normal component
         }
@@ -405,20 +428,24 @@ void FlipSolver2D::pushOutOfColliders() {
 }
 
 void FlipSolver2D::enforceParticleCollisions(Particle& prt) const {
-    // Domain walls
-    const float pad = 1e-4f;
-    if (prt.p.x < pad) { prt.p.x = pad; if (prt.v.x < 0) prt.v.x = 0; }
-    if (prt.p.x > 1.0f - pad) { prt.p.x = 1.0f - pad; if (prt.v.x > 0) prt.v.x = 0; }
-    if (prt.p.y < pad) { prt.p.y = pad; if (prt.v.y < 0) prt.v.y = 0; }
-    if (prt.p.y > 1.0f - pad) { prt.p.y = 1.0f - pad; if (prt.v.y > 0) prt.v.y = 0; }
-
-    // Colliders: project out if inside
-    float d = colliders_.sdf(prt.p);
+    auto domainSdf = [](const Vec2& p) {
+        float dl = p.x; float dr = 1.0f - p.x; float db = p.y; float dt = 1.0f - p.y;
+        return std::min(std::min(dl, dr), std::min(db, dt));
+    };
+    auto domainNormal = [](const Vec2& p) {
+        float dl = p.x; float dr = 1.0f - p.x; float db = p.y; float dt = 1.0f - p.y;
+        float m1 = std::min(dl, dr); float m2 = std::min(db, dt);
+        if (m1 < m2) return (dl < dr) ? Vec2(1.0f, 0.0f) : Vec2(-1.0f, 0.0f);
+        else return (db < dt) ? Vec2(0.0f, 1.0f) : Vec2(0.0f, -1.0f);
+    };
+    float dc = colliders_.sdf(prt.p);
+    float dd = domainSdf(prt.p);
+    float d = std::min(dc, dd);
     if (d < 0.0f) {
-        Vec2 n = colliders_.normal(prt.p);
-        prt.p -= n * d; // push out
+        Vec2 n = (dc < dd) ? colliders_.normal(prt.p) : domainNormal(prt.p);
+        prt.p -= n * d;
         float vn = dot(prt.v, n);
-        if (vn < 0.0f) prt.v -= n * vn; // kill inward normal component
+        if (vn < 0.0f) prt.v -= n * vn;
     }
 }
 
