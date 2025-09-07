@@ -124,6 +124,8 @@ void FlipSolver2D::step(float dt) {
         pushOutOfColliders();
         // Resolve excessive clustering to preserve volume thickness
         if (params_.enableMinSeparation) enforceMinimumSeparation(sdt);
+        // After separation, clamp to domain and colliders so P2G sees valid positions
+        for (auto& p : particles_) enforceParticleCollisions(p);
         clearGrid();
         buildMarkers();
         particlesToGrid();
@@ -134,6 +136,8 @@ void FlipSolver2D::step(float dt) {
         subtractPressureGradient();
         gridToParticles();
         if (params_.enableDensityRelax) enforceCellDensity(sdt);
+        // Final clamp for this substep to keep particles within domain even if density relax disabled
+        for (auto& p : particles_) enforceParticleCollisions(p);
     }
 }
 
