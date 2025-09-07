@@ -146,20 +146,28 @@ void Renderer2D::drawVelocity(const FlipSolver2D& solver, const Viewport& vp, co
     glLineWidth(1.0f);
     int nx = solver.nx(); int ny = solver.ny();
     int stride = std::max(1, rs.velStride);
-    const auto& u = solver.gridU();
-    const auto& v = solver.gridV();
     // Sample at cell centers for visualization
     for (int j = stride/2; j < ny; j += stride) {
         for (int i = stride/2; i < nx; i += stride) {
-            Vec2 wp = Vec2((i + 0.5f) / nx, (j + 0.5f) / ny);
-            // quick sampling reusing worldToScreen mapping: approximate by sampleGridVelocity
-            // We don't have direct access; use a small arrow pointing in estimated direction using nearest faces
-            float ux = 0.5f * (u[(i) + (nx+1)*j] + u[(i+1) + (nx+1)*j]);
-            float vy = 0.5f * (v[i + nx*(j)] + v[i + nx*(j+1)]);
-            Vec2 vel = Vec2(ux, vy) * 0.02f; // scale for display
+            Vec2 wp = Vec2((i + 0.5f) / (float)nx, (j + 0.5f) / (float)ny);
+            Vec2 vel = solver.sampleMAC(wp) * 0.02f; // scale for display
             Vec2 s0 = worldToScreen(wp, vp);
             Vec2 s1 = worldToScreen(Vec2(wp.x + vel.x, wp.y + vel.y), vp);
             glBegin(GL_LINES); glVertex2f(s0.x, s0.y); glVertex2f(s1.x, s1.y); glEnd();
         }
+    }
+}
+
+void Renderer2D::drawParticleVel(const FlipSolver2D& solver, const Viewport& vp, const RenderSettings& rs) {
+    if (!rs.showParticleVel) return;
+    glColor3f(0.95f, 0.8f, 0.3f);
+    glLineWidth(1.0f);
+    const auto& parts = solver.particles();
+    const float scale = 0.02f; // visual scale
+    for (const auto& prt : parts) {
+        Vec2 v = solver.sampleMAC(prt.p) * scale;
+        Vec2 s0 = worldToScreen(prt.p, vp);
+        Vec2 s1 = worldToScreen(Vec2(prt.p.x + v.x, prt.p.y + v.y), vp);
+        glBegin(GL_LINES); glVertex2f(s0.x, s0.y); glVertex2f(s1.x, s1.y); glEnd();
     }
 }

@@ -119,6 +119,7 @@ int main() {
         Renderer2D::drawColliders(solver, vp, ui.render);
         if (ui.render.showGrid) Renderer2D::drawGrid(solver, vp, ui.render);
         if (ui.render.showVel) Renderer2D::drawVelocity(solver, vp, ui.render);
+        if (ui.render.showParticleVel) Renderer2D::drawParticleVel(solver, vp, ui.render);
         Renderer2D::drawParticles(solver, vp, ui.render);
 
         // Start ImGui frame
@@ -150,6 +151,7 @@ int main() {
             ImGui::Checkbox("Show Grid", &ui.render.showGrid); ImGui::SameLine();
             ImGui::Checkbox("Vel", &ui.render.showVel);
             if (ui.render.showVel) ImGui::SliderInt("Vel Stride", &ui.render.velStride, 4, 32);
+            ImGui::Checkbox("Particle Vel (MAC)", &ui.render.showParticleVel);
             ImGui::SliderFloat("Particle Size", &ui.render.particleSize, 1.0f, 8.0f);
             ImGui::Checkbox("Show Colliders", &ui.render.showColliders);
             ImGui::Checkbox("ImGui Demo", &ui.showDemo);

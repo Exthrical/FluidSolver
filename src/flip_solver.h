@@ -56,6 +56,8 @@ public:
     int nx() const { return nx_; }
     int ny() const { return ny_; }
     float h() const { return h_; }
+    float hx() const { return hx_; }
+    float hy() const { return hy_; }
     float flipRatio() const { return params_.flipRatio; }
     void setFlipRatio(float r) { params_.flipRatio = r; }
     void setGravity(float g) { params_.gravity = g; }
@@ -73,11 +75,14 @@ public:
     // For debugging / visualization
     const std::vector<float>& gridU() const { return u_; }
     const std::vector<float>& gridV() const { return v_; }
+    // Canonical MAC sampler (used by G2P and debug rendering)
+    Vec2 sampleMAC(const Vec2& pos) const;
 
 private:
     FlipParams params_;
     int nx_{0}, ny_{0};
-    float h_{1.0f}; // cell size assuming domain [0,1]^2
+    float h_{1.0f}; // representative cell size (min of hx,hy) for UI/brush spacing
+    float hx_{1.0f}, hy_{1.0f}; // anisotropic spacings for x and y
 
     // Particles
     std::vector<Particle> particles_;
@@ -108,6 +113,7 @@ private:
     void subtractPressureGradient();
     void gridToParticles();
     void advectParticles(float dt);
+    void pushOutOfColliders();
     void enforceParticleCollisions(Particle& p) const;
     void enforceMinimumSeparation(float dt);
     void enforceCellDensity(float dt);

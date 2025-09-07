@@ -8,7 +8,9 @@ FlipSolver2D::FlipSolver2D(const FlipParams& params) : params_(params) {
 void FlipSolver2D::resize(int nx, int ny) {
     nx_ = std::max(4, nx);
     ny_ = std::max(4, ny);
-    h_ = 1.0f / std::max(nx_, ny_);
+    hx_ = 1.0f / (float)nx_;
+    hy_ = 1.0f / (float)ny_;
+    h_ = std::min(hx_, hy_);
     allocate();
 }
 
@@ -116,7 +118,10 @@ void FlipSolver2D::step(float dt) {
         for (auto& p : particles_) {
             p.v.y += params_.gravity * sdt;
         }
+        // Advect positions only; do not clamp before separation
         advectParticles(sdt);
+        // Push particles out of colliders (but do not clamp to domain yet)
+        pushOutOfColliders();
         // Resolve excessive clustering to preserve volume thickness
         if (params_.enableMinSeparation) enforceMinimumSeparation(sdt);
         clearGrid();
@@ -137,14 +142,14 @@ void FlipSolver2D::buildMarkers() {
     // Mark solid cells from colliders (domain boundaries handled via velocity BCs)
     for (int j = 0; j < ny_; ++j) {
         for (int i = 0; i < nx_; ++i) {
-            Vec2 c = Vec2((i + 0.5f) * h_, (j + 0.5f) * h_);
+            Vec2 c = Vec2((i + 0.5f) * hx_, (j + 0.5f) * hy_);
             if (colliders_.sdf(c) < 0.0f) marker_[idxC(i,j)] = 2;
         }
     }
     // Mark fluid cells where particles reside
     for (const auto& p : particles_) {
-        int i = (int)std::floor(p.p.x / h_);
-        int j = (int)std::floor(p.p.y / h_);
+        int i = (int)std::floor(p.p.x / hx_);
+        int j = (int)std::floor(p.p.y / hy_);
         if (i >= 0 && j >= 0 && i < nx_ && j < ny_) {
             if (marker_[idxC(i,j)] != 2) marker_[idxC(i,j)] = 1; // fluid unless solid
         }
@@ -174,8 +179,8 @@ void FlipSolver2D::particlesToGrid() {
     // Accumulate particle velocities to face centers with bilinear weights
     for (const auto& prt : particles_) {
         const Vec2& P = prt.p; const Vec2& V = prt.v;
-        // U faces at (i*h, (j+0.5)*h)
-        float x = P.x / h_; float y = P.y / h_ - 0.5f;
+        // U faces at (i*hx, (j+0.5)*hy)
+        float x = P.x / hx_; float y = P.y / hy_ - 0.5f;
         int i0 = (int)std::floor(x); int j0 = (int)std::floor(y);
         float fx = x - i0; float fy = y - j0;
         for (int dj = 0; dj <= 1; ++dj) for (int di = 0; di <= 1; ++di) {
@@ -186,8 +191,8 @@ void FlipSolver2D::particlesToGrid() {
                 u_[idx] += V.x * w; uW_[idx] += w;
             }
         }
-        // V faces at ((i+0.5)*h, j*h)
-        x = P.x / h_ - 0.5f; y = P.y / h_;
+        // V faces at ((i+0.5)*hx, j*hy)
+        x = P.x / hx_ - 0.5f; y = P.y / hy_;
         i0 = (int)std::floor(x); j0 = (int)std::floor(y);
         fx = x - i0; fy = y - j0;
         for (int dj = 0; dj <= 1; ++dj) for (int di = 0; di <= 1; ++di) {
@@ -210,7 +215,7 @@ void FlipSolver2D::applySolidBoundariesOnGrid() {
         for (int i = 0; i <= nx_; ++i) {
             int idx = idxU(i,j);
             bool solid = (i == 0 || i == nx_);
-            Vec2 fc = Vec2(i * h_, (j + 0.5f) * h_);
+            Vec2 fc = Vec2(i * hx_, (j + 0.5f) * hy_);
             if (colliders_.sdf(fc) < 0.0f) solid = true;
             if (solid) u_[idx] = 0.0f;
         }
@@ -219,7 +224,7 @@ void FlipSolver2D::applySolidBoundariesOnGrid() {
         for (int i = 0; i < nx_; ++i) {
             int idx = idxV(i,j);
             bool solid = (j == 0 || j == ny_);
-            Vec2 fc = Vec2((i + 0.5f) * h_, j * h_);
+            Vec2 fc = Vec2((i + 0.5f) * hx_, j * hy_);
             if (colliders_.sdf(fc) < 0.0f) solid = true;
             if (solid) v_[idx] = 0.0f;
         }
@@ -227,7 +232,6 @@ void FlipSolver2D::applySolidBoundariesOnGrid() {
 }
 
 void FlipSolver2D::computeDivergence() {
-    const float invh = 1.0f / h_;
     for (int j = 0; j < ny_; ++j) {
         for (int i = 0; i < nx_; ++i) {
             int c = idxC(i,j);
@@ -236,61 +240,59 @@ void FlipSolver2D::computeDivergence() {
             float uL = u_[idxU(i,   j)];
             float vT = v_[idxV(i,   j+1)];
             float vB = v_[idxV(i,   j  )];
-            div_[c] = invh * (uR - uL + vT - vB);
+            div_[c] = (uR - uL) / hx_ + (vT - vB) / hy_;
         }
     }
 }
 
 void FlipSolver2D::pressureSolve() {
-    // Gauss-Seidel iterations
-    // Discrete Poisson: (sum_neighbors - N * p_c) / h^2 = div
-    // => p_c = (sum_neighbors - div * h^2) / N
+    // Gauss-Seidel iterations for anisotropic grid spacing
+    // Discrete Poisson: (pL - pC)/hx^2 + (pR - pC)/hx^2 + (pB - pC)/hy^2 + (pT - pC)/hy^2 = div
+    // Handle boundary/air/solid by weighting per-direction.
+    const float wx = 1.0f / (hx_ * hx_);
+    const float wy = 1.0f / (hy_ * hy_);
     for (int it = 0; it < params_.pressureIters; ++it) {
         for (int j = 0; j < ny_; ++j) {
             for (int i = 0; i < nx_; ++i) {
                 int c = idxC(i,j);
                 if (marker_[c] == 2 || marker_[c] == 0) { p_[c] = 0.0f; continue; }
-                float sum = 0.0f; int count = 0;
+                float sum = 0.0f; float diag = 0.0f;
                 // Left
                 if (i > 0) {
                     uint8_t m = marker_[idxC(i-1,j)];
-                    if (m == 1) { sum += p_[idxC(i-1,j)]; count++; }
-                    else if (m == 0) { count++; } // air: Dirichlet p=0
-                    else { count++; } // solid: Neumann
-                } else { count++; } // domain boundary: Neumann
+                    if (m == 1) { sum += wx * p_[idxC(i-1,j)]; diag += wx; }
+                    else if (m == 0) { diag += wx; } // air: Dirichlet p=0 contributes to diag only
+                    else { /* solid: Neumann -> skip (no contribution) */ }
+                } else { /* domain boundary: Neumann -> skip */ }
                 // Right
                 if (i < nx_-1) {
                     uint8_t m = marker_[idxC(i+1,j)];
-                    if (m == 1) { sum += p_[idxC(i+1,j)]; count++; }
-                    else if (m == 0) { count++; }
-                    else { count++; }
-                } else { count++; }
+                    if (m == 1) { sum += wx * p_[idxC(i+1,j)]; diag += wx; }
+                    else if (m == 0) { diag += wx; }
+                    else { }
+                } else { }
                 // Bottom
                 if (j > 0) {
                     uint8_t m = marker_[idxC(i,j-1)];
-                    if (m == 1) { sum += p_[idxC(i,j-1)]; count++; }
-                    else if (m == 0) { count++; }
-                    else { count++; }
-                } else { count++; }
+                    if (m == 1) { sum += wy * p_[idxC(i,j-1)]; diag += wy; }
+                    else if (m == 0) { diag += wy; }
+                    else { }
+                } else { }
                 // Top
                 if (j < ny_-1) {
                     uint8_t m = marker_[idxC(i,j+1)];
-                    if (m == 1) { sum += p_[idxC(i,j+1)]; count++; }
-                    else if (m == 0) { count++; }
-                    else { count++; }
-                } else { count++; }
-                if (count > 0) {
-                    p_[c] = (sum - div_[c] * (h_ * h_)) / (float)count;
-                } else {
-                    p_[c] = 0.0f;
-                }
+                    if (m == 1) { sum += wy * p_[idxC(i,j+1)]; diag += wy; }
+                    else if (m == 0) { diag += wy; }
+                    else { }
+                } else { }
+
+                if (diag > 0.0f) p_[c] = (sum - div_[c]) / diag; else p_[c] = 0.0f;
             }
         }
     }
 }
 
 void FlipSolver2D::subtractPressureGradient() {
-    const float invh = 1.0f / h_;
     // U faces
     for (int j = 0; j < ny_; ++j) {
         for (int i = 1; i < nx_; ++i) { // interior faces
@@ -302,7 +304,7 @@ void FlipSolver2D::subtractPressureGradient() {
             // Neumann at solids: copy neighbor pressure to avoid artificial gradient
             if (marker_[cR] == 2 && marker_[cL] == 1) pR = pL;
             if (marker_[cL] == 2 && marker_[cR] == 1) pL = pR;
-            u_[idxU(i,j)] -= (pR - pL) * invh;
+            u_[idxU(i,j)] -= (pR - pL) / hx_;
         }
     }
     // V faces
@@ -315,15 +317,19 @@ void FlipSolver2D::subtractPressureGradient() {
             float pB = (marker_[cB] == 1) ? p_[cB] : 0.0f;
             if (marker_[cT] == 2 && marker_[cB] == 1) pT = pB;
             if (marker_[cB] == 2 && marker_[cT] == 1) pB = pT;
-            v_[idxV(i,j)] -= (pT - pB) * invh;
+            v_[idxV(i,j)] -= (pT - pB) / hy_;
         }
     }
     applySolidBoundariesOnGrid();
 }
 
+Vec2 FlipSolver2D::sampleMAC(const Vec2& P) const {
+    return sampleGridVelocity(P, u_, v_);
+}
+
 Vec2 FlipSolver2D::sampleGridVelocity(const Vec2& P, const std::vector<float>& u, const std::vector<float>& v) const {
     // Sample u
-    float x = P.x / h_; float y = P.y / h_ - 0.5f;
+    float x = P.x / hx_; float y = P.y / hy_ - 0.5f;
     int i0 = (int)std::floor(x); int j0 = (int)std::floor(y);
     float fx = x - i0; float fy = y - j0;
     float ux = 0.0f; float sumWu = 0.0f;
@@ -335,7 +341,7 @@ Vec2 FlipSolver2D::sampleGridVelocity(const Vec2& P, const std::vector<float>& u
         }
     }
     // Sample v
-    x = P.x / h_ - 0.5f; y = P.y / h_;
+    x = P.x / hx_ - 0.5f; y = P.y / hy_;
     i0 = (int)std::floor(x); j0 = (int)std::floor(y);
     fx = x - i0; fy = y - j0;
     float vy = 0.0f; float sumWv = 0.0f;
@@ -378,7 +384,18 @@ void FlipSolver2D::advectParticles(float dt) {
     for (auto& p : particles_) {
         // Simple explicit Euler
         p.p += p.v * dt;
-        enforceParticleCollisions(p);
+    }
+}
+
+void FlipSolver2D::pushOutOfColliders() {
+    for (auto& prt : particles_) {
+        float d = colliders_.sdf(prt.p);
+        if (d < 0.0f) {
+            Vec2 n = colliders_.normal(prt.p);
+            prt.p -= n * d; // push out
+            float vn = dot(prt.v, n);
+            if (vn < 0.0f) prt.v -= n * vn; // kill inward normal component
+        }
     }
 }
 
@@ -415,8 +432,8 @@ void FlipSolver2D::enforceMinimumSeparation(float dt) {
         bins.resize(nx_ * ny_);
         for (int i = 0; i < (int)particles_.size(); ++i) {
             const Vec2& p = particles_[i].p;
-            int ix = (int)std::floor(p.x / h_);
-            int iy = (int)std::floor(p.y / h_);
+            int ix = (int)std::floor(p.x / hx_);
+            int iy = (int)std::floor(p.y / hy_);
             if (ix < 0 || iy < 0 || ix >= nx_ || iy >= ny_) continue;
             bins[idxC(ix, iy)].push_back(i);
         }
@@ -483,8 +500,8 @@ void FlipSolver2D::enforceCellDensity(float dt) {
     const float n0 = std::max(1, params_.particlesPerCell);
     std::vector<float> occ(nx_ * ny_, 0.0f);
     for (const auto& p : particles_) {
-        int ix = (int)std::floor(p.p.x / h_);
-        int iy = (int)std::floor(p.p.y / h_);
+        int ix = (int)std::floor(p.p.x / hx_);
+        int iy = (int)std::floor(p.p.y / hy_);
         if (ix < 0 || iy < 0 || ix >= nx_ || iy >= ny_) continue;
         occ[idxC(ix, iy)] += 1.0f;
     }
@@ -527,8 +544,8 @@ void FlipSolver2D::enforceCellDensity(float dt) {
     }
     const float k = params_.densityStrength; // strength per application
     for (auto& p : particles_) {
-        int ix = (int)std::floor(p.p.x / h_);
-        int iy = (int)std::floor(p.p.y / h_);
+        int ix = (int)std::floor(p.p.x / hx_);
+        int iy = (int)std::floor(p.p.y / hy_);
         if (ix < 0 || iy < 0 || ix >= nx_ || iy >= ny_) continue;
         int c = idxC(ix, iy);
         float oc = occ[c] - n0;

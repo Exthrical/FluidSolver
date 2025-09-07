@@ -9,6 +9,7 @@ struct RenderSettings {
     int velStride = 8;
     bool showColliders = true;
     float particleSize = 3.0f; // pixels
+    bool showParticleVel = false; // draw MAC-sampled velocity at particle positions
 };
 
 struct Viewport {
@@ -30,5 +31,5 @@ public:
     static void drawColliders(const FlipSolver2D& solver, const Viewport& vp, const RenderSettings& rs);
     static void drawGrid(const FlipSolver2D& solver, const Viewport& vp, const RenderSettings& rs);
     static void drawVelocity(const FlipSolver2D& solver, const Viewport& vp, const RenderSettings& rs);
+    static void drawParticleVel(const FlipSolver2D& solver, const Viewport& vp, const RenderSettings& rs);
 };
-
